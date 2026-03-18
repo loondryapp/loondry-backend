@@ -8,6 +8,11 @@ import { syncCalendar, syncPropertyCalendars } from "../lib/ical-sync.js";
 
 export const hostRouter = Router();
 
+function isArchivedAtMissing(error: unknown) {
+  const msg = error && typeof error === "object" && "message" in error ? String((error as any).message) : "";
+  return msg.includes("archived_at");
+}
+
 hostRouter.use(async (req, _res, next) => {
   const user = await requireUser(req);
   if (!user) return next(new HttpError(401, "Unauthorized"));
@@ -20,10 +25,22 @@ hostRouter.get("/api/host/properties", async (req, res) => {
   const userId = req.userId!;
   const { data, error } = await supabase
     .from("properties")
-    .select("id, name, address, city, rooms, beds, created_at")
+    .select("id, name, address, city, rooms, beds, created_at, archived_at")
     .eq("user_id", userId)
+    .is("archived_at", null)
     .order("created_at", { ascending: false });
-  if (error) throw new HttpError(400, error.message);
+  if (error) {
+    if (isArchivedAtMissing(error)) {
+      const fallback = await supabase
+        .from("properties")
+        .select("id, name, address, city, rooms, beds, created_at")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false });
+      if (fallback.error) throw new HttpError(400, fallback.error.message);
+      return res.json(fallback.data ?? []);
+    }
+    throw new HttpError(400, error.message);
+  }
   res.json(data ?? []);
 });
 
@@ -34,11 +51,24 @@ hostRouter.get("/api/host/properties/:id", async (req, res) => {
   const userId = req.userId!;
   const { data, error } = await supabase
     .from("properties")
-    .select("id, name, address, city, rooms, beds, created_at")
+    .select("id, name, address, city, rooms, beds, created_at, archived_at")
     .eq("id", id)
     .eq("user_id", userId)
     .maybeSingle();
-  if (error) throw new HttpError(400, error.message);
+  if (error) {
+    if (isArchivedAtMissing(error)) {
+      const fallback = await supabase
+        .from("properties")
+        .select("id, name, address, city, rooms, beds, created_at")
+        .eq("id", id)
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (fallback.error) throw new HttpError(400, fallback.error.message);
+      if (!fallback.data) throw new HttpError(404, "Property not found");
+      return res.json(fallback.data);
+    }
+    throw new HttpError(400, error.message);
+  }
   if (!data) throw new HttpError(404, "Property not found");
   res.json(data);
 });
@@ -76,6 +106,7 @@ hostRouter.patch("/api/host/properties/:id", async (req, res) => {
       city: z.string().min(1).optional(),
       rooms: z.number().int().min(1).optional(),
       beds: z.number().int().min(1).optional(),
+      archived_at: z.string().datetime().nullable().optional(),
     })
     .safeParse(req.body);
   if (!body.success) throw new HttpError(400, "Invalid body", body.error.flatten());
@@ -87,10 +118,36 @@ hostRouter.patch("/api/host/properties/:id", async (req, res) => {
     .update(body.data)
     .eq("id", id)
     .eq("user_id", userId)
-    .select("id, name, address, city, rooms, beds, created_at")
+    .select("id, name, address, city, rooms, beds, created_at, archived_at")
     .single();
   if (error) throw new HttpError(400, error.message);
   res.json(data);
+});
+
+hostRouter.post("/api/host/properties/:id/archive", async (req, res) => {
+  const id = String(req.params.id || "");
+  if (!id) throw new HttpError(400, "Missing id");
+  const supabase = getSupabaseService();
+  const userId = req.userId!;
+  const { data, error } = await supabase
+    .from("properties")
+    .update({ archived_at: new Date().toISOString() })
+    .eq("id", id)
+    .eq("user_id", userId)
+    .select("id, archived_at")
+    .single();
+  if (error) throw new HttpError(400, error.message);
+  res.json(data);
+});
+
+hostRouter.delete("/api/host/properties/:id", async (req, res) => {
+  const id = String(req.params.id || "");
+  if (!id) throw new HttpError(400, "Missing id");
+  const supabase = getSupabaseService();
+  const userId = req.userId!;
+  const { error } = await supabase.from("properties").delete().eq("id", id).eq("user_id", userId);
+  if (error) throw new HttpError(400, error.message);
+  res.json({ ok: true });
 });
 
 hostRouter.get("/api/host/calendars", async (req, res) => {
@@ -226,9 +283,9 @@ hostRouter.post("/api/host/billing", async (req, res) => {
       last_name: z.string().min(1),
       billing_address: z.string().min(1),
       tax_code: z.string().min(1),
-      vat_number: z.string().optional(),
-      legal_address: z.string().optional(),
-      company_name: z.string().optional(),
+      vat_number: z.string().nullable().optional(),
+      legal_address: z.string().nullable().optional(),
+      company_name: z.string().nullable().optional(),
     })
     .safeParse(req.body);
   if (!body.success) throw new HttpError(400, "Invalid body", body.error.flatten());
@@ -290,9 +347,17 @@ hostRouter.get("/api/host/bookings", async (req, res) => {
   const supabase = getSupabaseService();
   const userId = req.userId!;
 
-  let propertiesQuery = supabase.from("properties").select("id").eq("user_id", userId);
+  let propertiesQuery = supabase.from("properties").select("id").eq("user_id", userId).is("archived_at", null);
   if (query.data.property_id) propertiesQuery = propertiesQuery.eq("id", query.data.property_id);
-  const { data: properties, error: propError } = await propertiesQuery;
+  let { data: properties, error: propError } = await propertiesQuery;
+  if (propError && isArchivedAtMissing(propError)) {
+    let fallback = supabase.from("properties").select("id").eq("user_id", userId);
+    if (query.data.property_id) fallback = fallback.eq("id", query.data.property_id);
+    const fb = await fallback;
+    if (fb.error) throw new HttpError(400, fb.error.message);
+    properties = fb.data;
+    propError = null;
+  }
   if (propError) throw new HttpError(400, propError.message);
   const ids = (properties ?? []).map((p) => p.id);
   if (ids.length === 0) return res.json([]);
@@ -301,8 +366,8 @@ hostRouter.get("/api/host/bookings", async (req, res) => {
     .from("bookings")
     .select("id, property_id, calendar_id, external_id, source_name, summary, start_date, end_date")
     .in("property_id", ids)
-    .gte("start_date", query.data.from)
-    .lte("end_date", query.data.to);
+    .lte("start_date", query.data.to)
+    .gte("end_date", query.data.from);
   if (error) throw new HttpError(400, error.message);
   res.json(data ?? []);
 });
