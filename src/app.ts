@@ -6,6 +6,7 @@ import { env } from "./lib/env.js";
 import { errorHandler, notFound } from "./lib/http.js";
 import { healthRouter } from "./routes/health.js";
 import { opsRouter } from "./routes/ops.js";
+import { hostRouter } from "./routes/host.js";
 
 type OriginDecision = string | boolean;
 
@@ -44,6 +45,7 @@ export function createApp() {
 
   app.use(healthRouter);
   app.use(opsRouter);
+  app.use(hostRouter);
 
   app.use(notFound);
   app.use(errorHandler);
