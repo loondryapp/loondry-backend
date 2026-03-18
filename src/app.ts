@@ -38,6 +38,9 @@ export function createApp() {
         const decision: OriginDecision = allowed;
         return cb(null, decision);
       },
+      methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+      allowedHeaders: ["Authorization", "Content-Type"],
+      credentials: true,
     })
   );
 
