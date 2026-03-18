@@ -6,20 +6,18 @@ import { requireUser } from "../lib/auth.js";
 import { getSupabaseService } from "../lib/supabase.js";
 import { syncCalendar, syncPropertyCalendars } from "../lib/ical-sync.js";
 
-type AuthedRequest = Request & { userId: string };
-
 export const hostRouter = Router();
 
 hostRouter.use(async (req, _res, next) => {
   const user = await requireUser(req);
   if (!user) return next(new HttpError(401, "Unauthorized"));
-  (req as AuthedRequest).userId = user.id;
+  req.userId = user.id;
   return next();
 });
 
 hostRouter.get("/api/host/properties", async (req, res) => {
   const supabase = getSupabaseService();
-  const userId = (req as AuthedRequest).userId;
+  const userId = req.userId!;
   const { data, error } = await supabase
     .from("properties")
     .select("id, name, address, city, rooms, beds, created_at")
@@ -33,7 +31,7 @@ hostRouter.get("/api/host/properties/:id", async (req, res) => {
   const id = String(req.params.id || "");
   if (!id) throw new HttpError(400, "Missing id");
   const supabase = getSupabaseService();
-  const userId = (req as AuthedRequest).userId;
+  const userId = req.userId!;
   const { data, error } = await supabase
     .from("properties")
     .select("id, name, address, city, rooms, beds, created_at")
@@ -58,7 +56,7 @@ hostRouter.post("/api/host/properties", async (req, res) => {
   if (!body.success) throw new HttpError(400, "Invalid body", body.error.flatten());
 
   const supabase = getSupabaseService();
-  const userId = (req as AuthedRequest).userId;
+  const userId = req.userId!;
   const { data, error } = await supabase
     .from("properties")
     .insert({ ...body.data, user_id: userId })
@@ -83,7 +81,7 @@ hostRouter.patch("/api/host/properties/:id", async (req, res) => {
   if (!body.success) throw new HttpError(400, "Invalid body", body.error.flatten());
 
   const supabase = getSupabaseService();
-  const userId = (req as AuthedRequest).userId;
+  const userId = req.userId!;
   const { data, error } = await supabase
     .from("properties")
     .update(body.data)
@@ -104,7 +102,7 @@ hostRouter.get("/api/host/calendars", async (req, res) => {
   if (!query.success) throw new HttpError(400, "Invalid query", query.error.flatten());
 
   const supabase = getSupabaseService();
-  const userId = (req as AuthedRequest).userId;
+  const userId = req.userId!;
 
   const { data: property, error: propError } = await supabase
     .from("properties")
@@ -135,7 +133,7 @@ hostRouter.post("/api/host/calendars", async (req, res) => {
   if (!body.success) throw new HttpError(400, "Invalid body", body.error.flatten());
 
   const supabase = getSupabaseService();
-  const userId = (req as AuthedRequest).userId;
+  const userId = req.userId!;
 
   const { data: property, error: propError } = await supabase
     .from("properties")
@@ -167,7 +165,7 @@ hostRouter.patch("/api/host/calendars/:id", async (req, res) => {
   if (!body.success) throw new HttpError(400, "Invalid body", body.error.flatten());
 
   const supabase = getSupabaseService();
-  const userId = (req as AuthedRequest).userId;
+  const userId = req.userId!;
 
   const { data: calendar, error: calError } = await supabase
     .from("property_calendars")
@@ -198,7 +196,7 @@ hostRouter.delete("/api/host/calendars/:id", async (req, res) => {
   const id = String(req.params.id || "");
   if (!id) throw new HttpError(400, "Missing id");
   const supabase = getSupabaseService();
-  const userId = (req as AuthedRequest).userId;
+  const userId = req.userId!;
 
   const { data: calendar, error: calError } = await supabase
     .from("property_calendars")
@@ -236,7 +234,7 @@ hostRouter.post("/api/host/billing", async (req, res) => {
   if (!body.success) throw new HttpError(400, "Invalid body", body.error.flatten());
 
   const supabase = getSupabaseService();
-  const userId = (req as AuthedRequest).userId;
+  const userId = req.userId!;
   const { data, error } = await supabase
     .from("host_billings")
     .insert({ ...body.data, user_id: userId })
@@ -248,7 +246,7 @@ hostRouter.post("/api/host/billing", async (req, res) => {
 
 hostRouter.post("/api/host/seed-properties", async (req, res) => {
   const supabase = getSupabaseService();
-  const userId = (req as AuthedRequest).userId;
+  const userId = req.userId!;
 
   const seed = [
     { name: "Bocconi", address: "Viale Bligny 64, 20136 Milano MI", city: "Milano", rooms: 2, beds: 2 },
@@ -290,7 +288,7 @@ hostRouter.get("/api/host/bookings", async (req, res) => {
   if (!query.success) throw new HttpError(400, "Invalid query", query.error.flatten());
 
   const supabase = getSupabaseService();
-  const userId = (req as AuthedRequest).userId;
+  const userId = req.userId!;
 
   let propertiesQuery = supabase.from("properties").select("id").eq("user_id", userId);
   if (query.data.property_id) propertiesQuery = propertiesQuery.eq("id", query.data.property_id);
@@ -312,7 +310,7 @@ hostRouter.get("/api/host/bookings", async (req, res) => {
 hostRouter.post("/api/host/calendars/:id/sync", async (req, res) => {
   const id = String(req.params.id || "");
   if (!id) throw new HttpError(400, "Missing id");
-  const userId = (req as { userId: string }).userId;
+  const userId = req.userId!;
   const result = await syncCalendar(id, userId);
   if (!result.ok) throw new HttpError(400, result.error || "Sync failed");
   res.json(result);
@@ -321,7 +319,7 @@ hostRouter.post("/api/host/calendars/:id/sync", async (req, res) => {
 hostRouter.post("/api/host/properties/:id/sync", async (req, res) => {
   const id = String(req.params.id || "");
   if (!id) throw new HttpError(400, "Missing id");
-  const userId = (req as { userId: string }).userId;
+  const userId = req.userId!;
   const result = await syncPropertyCalendars(id, userId);
   if (!result.ok) throw new HttpError(400, result.error || "Sync failed");
   res.json(result);
