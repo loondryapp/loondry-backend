@@ -7,6 +7,7 @@ type CalendarRow = {
   property_id: string;
   name: string;
   ical_url: string;
+  properties?: { name?: string; user_id?: string };
 };
 
 export async function syncCalendar(calendarId: string, userId: string) {
@@ -14,7 +15,7 @@ export async function syncCalendar(calendarId: string, userId: string) {
 
   const { data: calendar, error } = await supabase
     .from("property_calendars")
-    .select("id, property_id, name, ical_url, properties!inner(user_id)")
+    .select("id, property_id, name, ical_url, properties!inner(user_id, name)")
     .eq("id", calendarId)
     .maybeSingle();
 
@@ -22,7 +23,7 @@ export async function syncCalendar(calendarId: string, userId: string) {
     return { ok: false, error: error?.message ?? "Calendar not found" };
   }
 
-  const ownerId = (calendar as { properties?: { user_id?: string } }).properties?.user_id;
+  const ownerId = (calendar as CalendarRow).properties?.user_id;
   if (!ownerId || ownerId !== userId) {
     return { ok: false, error: "Not authorized" };
   }
@@ -31,6 +32,7 @@ export async function syncCalendar(calendarId: string, userId: string) {
 
   try {
     const events = await ical.async.fromURL(calendar.ical_url);
+    const nowIso = new Date().toISOString();
     const rows = Object.values(events)
       .filter((e) => e.type === "VEVENT")
       .map((event) => ({
@@ -45,11 +47,36 @@ export async function syncCalendar(calendarId: string, userId: string) {
       }))
       .filter((row) => row.external_id && row.start_date && row.end_date);
 
+    const historyRows = Object.values(events)
+      .filter((e) => e.type === "VEVENT")
+      .map((event) => ({
+        property_id: calendar.property_id,
+        property_name: (calendar as CalendarRow).properties?.name ?? null,
+        calendar_source: calendar.name ?? null,
+        calendar_url: calendar.ical_url,
+        url_key: encodeURIComponent(String(calendar.ical_url)),
+        uid: String(event.uid),
+        start_at: event.start?.toISOString(),
+        end_at: event.end?.toISOString(),
+        summary: event.summary ?? null,
+        status: event.status ?? null,
+        last_seen_at: nowIso,
+        updated_at: nowIso,
+      }))
+      .filter((row) => row.uid && row.start_at && row.end_at);
+
     if (rows.length > 0) {
       const { error: upsertError } = await supabase
         .from("bookings")
         .upsert(rows, { onConflict: "external_id" });
       if (upsertError) throw upsertError;
+    }
+
+    if (historyRows.length > 0) {
+      const { error: histError } = await supabase
+        .from("ical_events_history")
+        .upsert(historyRows, { onConflict: "property_id,uid,start_at,end_at" });
+      if (histError) throw histError;
     }
 
     await supabase
@@ -64,8 +91,13 @@ export async function syncCalendar(calendarId: string, userId: string) {
   }
 }
 
-export async function syncPropertyCalendars(propertyId: string, userId: string) {
+export async function syncPropertyCalendars(
+  propertyId: string,
+  userId: string,
+  opts: { minMinutes?: number } = {}
+) {
   const supabase = getSupabaseService();
+  const minMinutes = Number.isFinite(opts.minMinutes) ? (opts.minMinutes as number) : 30;
 
   const { data: property, error } = await supabase
     .from("properties")
@@ -83,11 +115,21 @@ export async function syncPropertyCalendars(propertyId: string, userId: string) 
 
   const { data: calendars } = await supabase
     .from("property_calendars")
-    .select("id")
+    .select("id, last_synced_at, status")
     .eq("property_id", propertyId);
 
   const results = [];
   for (const calendar of calendars ?? []) {
+    const last = calendar.last_synced_at ? new Date(calendar.last_synced_at).getTime() : 0;
+    const minutesSince = last ? (Date.now() - last) / 60000 : Infinity;
+    if (calendar.status === "syncing") {
+      results.push({ ok: true, id: calendar.id, skipped: true, reason: "already syncing" });
+      continue;
+    }
+    if (minutesSince < minMinutes) {
+      results.push({ ok: true, id: calendar.id, skipped: true, reason: "recently synced" });
+      continue;
+    }
     results.push(await syncCalendar(calendar.id, userId));
   }
 
