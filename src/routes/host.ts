@@ -532,26 +532,36 @@ hostRouter.post("/api/host/bookings-history/cleanup", async (req, res) => {
 });
 
 hostRouter.post("/api/host/calendars/:id/sync", async (req, res) => {
-  const id = String(req.params.id || "");
-  if (!id) throw new HttpError(400, "Missing id");
-  const userId = req.userId!;
-  const result = await syncCalendar(id, userId);
-  if (!result.ok) throw new HttpError(400, result.error || "Sync failed");
-  res.json(result);
+  try {
+    const id = String(req.params.id || "");
+    if (!id) return res.status(400).json({ error: "Missing id" });
+    const userId = req.userId!;
+    const result = await syncCalendar(id, userId);
+    if (!result.ok) return res.status(400).json({ error: result.error || "Sync failed" });
+    return res.json(result);
+  } catch (err) {
+    console.error("/api/host/calendars/:id/sync failed", err);
+    return res.status(500).json({ error: "Sync failed" });
+  }
 });
 
 hostRouter.post("/api/host/properties/:id/sync", async (req, res) => {
-  const id = String(req.params.id || "");
-  if (!id) throw new HttpError(400, "Missing id");
-  const userId = req.userId!;
-  const query = z
-    .object({
-      min_minutes: z.coerce.number().int().min(0).optional(),
-    })
-    .safeParse(req.query);
-  if (!query.success) throw new HttpError(400, "Invalid query", query.error.flatten());
+  try {
+    const id = String(req.params.id || "");
+    if (!id) return res.status(400).json({ error: "Missing id" });
+    const userId = req.userId!;
+    const query = z
+      .object({
+        min_minutes: z.coerce.number().int().min(0).optional(),
+      })
+      .safeParse(req.query);
+    if (!query.success) return res.status(400).json({ error: "Invalid query", details: query.error.flatten() });
 
-  const result = await syncPropertyCalendars(id, userId, { minMinutes: query.data.min_minutes });
-  if (!result.ok) throw new HttpError(400, result.error || "Sync failed");
-  res.json(result);
+    const result = await syncPropertyCalendars(id, userId, { minMinutes: query.data.min_minutes });
+    if (!result.ok) return res.status(400).json({ error: result.error || "Sync failed" });
+    return res.json(result);
+  } catch (err) {
+    console.error("/api/host/properties/:id/sync failed", err);
+    return res.status(500).json({ error: "Sync failed" });
+  }
 });

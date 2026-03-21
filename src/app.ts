@@ -7,6 +7,7 @@ import { errorHandler, notFound } from "./lib/http.js";
 import { healthRouter } from "./routes/health.js";
 import { opsRouter } from "./routes/ops.js";
 import { hostRouter } from "./routes/host.js";
+import { impersonationRouter } from "./routes/impersonation.js";
 
 type OriginDecision = string | boolean;
 
@@ -39,7 +40,7 @@ export function createApp() {
         return cb(null, decision);
       },
       methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-      allowedHeaders: ["Authorization", "Content-Type"],
+      allowedHeaders: ["Authorization", "Content-Type", "X-Impersonate-User", "X-Impersonate-Role"],
       credentials: true,
     })
   );
@@ -49,6 +50,7 @@ export function createApp() {
   app.use(healthRouter);
   app.use(opsRouter);
   app.use(hostRouter);
+  app.use(impersonationRouter);
 
   app.use(notFound);
   app.use(errorHandler);
