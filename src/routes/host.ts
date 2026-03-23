@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Request, type Response, type NextFunction } from "express";
 import { z } from "zod";
 
 import { HttpError } from "../lib/http.js";
@@ -20,6 +20,120 @@ hostRouter.use(async (req, _res, next) => {
   return next();
 });
 
+async function ensureClientForLaundry(supabase: ReturnType<typeof getSupabaseService>, laundryId: string, userId: string) {
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("first_name,last_name,email,phone")
+    .eq("id", userId)
+    .maybeSingle();
+  let profileEmail = profile?.email ?? null;
+  if (!profileEmail) {
+    try {
+      const { data: authUser } = await supabase.auth.admin.getUserById(userId);
+      profileEmail = authUser?.user?.email ?? null;
+    } catch {
+      // ignore admin lookup errors
+    }
+  }
+  const profileName = `${profile?.first_name ?? ""} ${profile?.last_name ?? ""}`.trim();
+  if (!profileEmail) return;
+
+  const { data: existingClient, error: existingClientError } = await supabase
+    .from("clients")
+    .select("id")
+    .eq("laundry_id", laundryId)
+    .eq("email", profileEmail)
+    .maybeSingle();
+  if (existingClientError && !String(existingClientError.message || "").includes("Results contain 0 rows")) {
+    throw new HttpError(400, existingClientError.message);
+  }
+  if (!existingClient?.id) {
+    const { error: clientError } = await supabase.from("clients").insert({
+      name: profileName || profileEmail,
+      email: profileEmail,
+      phone: profile?.phone ?? null,
+      source: "loondry",
+      is_active: true,
+      laundry_id: laundryId,
+    });
+    if (clientError) throw new HttpError(400, clientError.message);
+  }
+}
+
+async function createConnection(req: Request, res: Response, next: NextFunction) {
+  try {
+    const body = z
+      .object({
+        invite_code: z.string().min(1),
+      })
+      .safeParse(req.body);
+    if (!body.success) return next(new HttpError(400, "Invalid body", body.error.flatten()));
+
+    const supabase = getSupabaseService();
+    const userId = req.userId!;
+    const normalized = body.data.invite_code.trim().toUpperCase();
+
+    const { data: laundry, error: laundryError } = await supabase
+      .from("laundries")
+      .select("id, company_name, host_invite_code")
+      .eq("host_invite_code", normalized)
+      .maybeSingle();
+    if (laundryError) return next(new HttpError(400, laundryError.message));
+    if (!laundry?.id) return next(new HttpError(404, "Laundry not found"));
+
+    const { data: existing, error: existingError } = await supabase
+      .from("laundry_host_links")
+      .select("id,status")
+      .eq("host_id", userId)
+      .eq("laundry_id", laundry.id)
+      .maybeSingle();
+    if (existingError && !String(existingError.message || "").includes("Results contain 0 rows")) {
+      return next(new HttpError(400, existingError.message));
+    }
+    if (existing?.id) {
+      try {
+        await ensureClientForLaundry(supabase, laundry.id, userId);
+      } catch (err) {
+        return next(err);
+      }
+      return res.status(200).json({
+        laundry_id: laundry.id,
+        status: existing.status ?? "active",
+        is_primary: true,
+        laundries: { id: laundry.id, company_name: laundry.company_name },
+      });
+    }
+
+    await supabase.from("laundry_host_links").update({ is_primary: false }).eq("host_id", userId);
+
+    const { data: created, error: createError } = await supabase
+      .from("laundry_host_links")
+      .insert({
+        laundry_id: laundry.id,
+        host_id: userId,
+        status: "active",
+        is_primary: true,
+      })
+      .select("laundry_id,status,is_primary")
+      .maybeSingle();
+    if (createError) return next(new HttpError(400, createError.message));
+
+    await ensureClientForLaundry(supabase, laundry.id, userId);
+
+    res.json({
+      laundry_id: created?.laundry_id ?? laundry.id,
+      status: created?.status ?? "active",
+      is_primary: created?.is_primary ?? true,
+      laundries: { id: laundry.id, company_name: laundry.company_name },
+    });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+hostRouter.post("/api/host/connections", (req, res, next) => createConnection(req, res, next));
+hostRouter.post("/api/connections", (req, res, next) => createConnection(req, res, next));
+
 hostRouter.get("/api/host/properties", async (req, res) => {
   const query = z
     .object({
@@ -34,7 +148,7 @@ hostRouter.get("/api/host/properties", async (req, res) => {
 
   let propsQuery = supabase
     .from("properties")
-    .select("id, name, address, city, rooms, beds, created_at, cover_url, archived_at, cover_url")
+    .select("id, name, address, city, rooms, beds, created_at, cover_url, use_laundry, management_type, archived_at, use_laundry, management_type")
     .eq("user_id", userId);
   if (!includeArchived) propsQuery = propsQuery.is("archived_at", null);
   const { data, error } = await propsQuery.order("created_at", { ascending: false });
@@ -42,7 +156,7 @@ hostRouter.get("/api/host/properties", async (req, res) => {
     if (isArchivedAtMissing(error)) {
       const fallback = await supabase
         .from("properties")
-        .select("id, name, address, city, rooms, beds, created_at, cover_url")
+        .select("id, name, address, city, rooms, beds, created_at, cover_url, use_laundry, management_type")
         .eq("user_id", userId)
         .order("created_at", { ascending: false });
       if (fallback.error) throw new HttpError(400, fallback.error.message);
@@ -60,7 +174,7 @@ hostRouter.get("/api/host/properties/:id", async (req, res) => {
   const userId = req.userId!;
   const { data, error } = await supabase
     .from("properties")
-    .select("id, name, address, city, rooms, beds, created_at, cover_url, archived_at, cover_url")
+    .select("id, name, address, city, rooms, beds, created_at, cover_url, use_laundry, management_type, archived_at, use_laundry, management_type")
     .eq("id", id)
     .eq("user_id", userId)
     .maybeSingle();
@@ -68,7 +182,7 @@ hostRouter.get("/api/host/properties/:id", async (req, res) => {
     if (isArchivedAtMissing(error)) {
       const fallback = await supabase
         .from("properties")
-        .select("id, name, address, city, rooms, beds, created_at, cover_url")
+        .select("id, name, address, city, rooms, beds, created_at, cover_url, use_laundry, management_type")
         .eq("id", id)
         .eq("user_id", userId)
         .maybeSingle();
@@ -90,6 +204,8 @@ hostRouter.post("/api/host/properties", async (req, res) => {
       city: z.string().min(1),
       rooms: z.number().int().min(1),
       beds: z.number().int().min(1).default(2),
+      use_laundry: z.boolean().optional(),
+      management_type: z.enum(["self", "linen", "full"]).optional(),
     })
     .safeParse(req.body);
   if (!body.success) throw new HttpError(400, "Invalid body", body.error.flatten());
@@ -99,7 +215,7 @@ hostRouter.post("/api/host/properties", async (req, res) => {
   const { data, error } = await supabase
     .from("properties")
     .insert({ ...body.data, user_id: userId })
-    .select("id, name, address, city, rooms, beds, created_at, cover_url")
+    .select("id, name, address, city, rooms, beds, created_at, cover_url, use_laundry, management_type")
     .single();
   if (error) throw new HttpError(400, error.message);
   res.json(data);
@@ -117,6 +233,8 @@ hostRouter.patch("/api/host/properties/:id", async (req, res) => {
       beds: z.number().int().min(1).optional(),
       cover_url: z.string().url().nullable().optional(),
       archived_at: z.string().datetime().nullable().optional(),
+      use_laundry: z.boolean().optional(),
+      management_type: z.enum(["self", "linen", "full"]).optional(),
     })
     .safeParse(req.body);
   if (!body.success) throw new HttpError(400, "Invalid body", body.error.flatten());
@@ -125,10 +243,10 @@ hostRouter.patch("/api/host/properties/:id", async (req, res) => {
   const userId = req.userId!;
   const baseUpdate = supabase.from("properties").update(body.data).eq("id", id).eq("user_id", userId);
   let { data, error } = await baseUpdate
-    .select("id, name, address, city, rooms, beds, created_at, cover_url, archived_at")
+    .select("id, name, address, city, rooms, beds, created_at, cover_url, use_laundry, management_type, archived_at")
     .single();
   if (error && isArchivedAtMissing(error)) {
-    const fallback = await baseUpdate.select("id, name, address, city, rooms, beds, created_at, cover_url").single();
+    const fallback = await baseUpdate.select("id, name, address, city, rooms, beds, created_at, cover_url, use_laundry, management_type").single();
     if (fallback.error) throw new HttpError(400, fallback.error.message);
     return res.json(fallback.data);
   }
