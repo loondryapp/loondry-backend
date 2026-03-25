@@ -541,9 +541,9 @@ hostRouter.get("/api/host/bookings-history", async (req, res) => {
 
   const { data, error } = await supabase
     .from("ical_events_history")
-    .select("id, property_id, start_at, end_at, calendar_source, summary, status, last_seen_at")
+    .select("id, property_id, start_at, end_at, calendar_source, summary, status, last_seen_at, cancelled")
     .in("property_id", ids)
-    .or("status.is.null,status.neq.cancelled")
+    .eq("cancelled", false)
     .lte("start_at", query.data.to)
     .gte("end_at", query.data.from)
     .order("start_at", { ascending: true });
@@ -600,6 +600,7 @@ hostRouter.post("/api/host/bookings-history", async (req, res) => {
       end_at: e.end_at,
       summary: e.summary ?? null,
       status: null,
+      cancelled: false,
       last_seen_at: now,
       updated_at: now,
     }));
@@ -638,11 +639,11 @@ hostRouter.post("/api/host/bookings-history/cleanup", async (req, res) => {
 
   const { data, error } = await supabase
     .from("ical_events_history")
-    .update({ status: "cancelled", updated_at: new Date().toISOString() })
+    .update({ cancelled: true, updated_at: new Date().toISOString() })
     .in("property_id", ids)
     .gte("end_at", today)
     .lt("last_seen_at", cutoff)
-    .is("status", null)
+    .eq("cancelled", false)
     .select("id");
   if (error) throw new HttpError(400, error.message);
 

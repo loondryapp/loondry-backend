@@ -45,7 +45,13 @@ export async function syncCalendar(calendarId: string, userId: string) {
         end_date: event.end?.toISOString(),
         raw_data: event,
       }))
-      .filter((row) => row.external_id && row.start_date && row.end_date);
+      .filter(
+        (row) =>
+          row.external_id &&
+          row.start_date &&
+          row.end_date &&
+          !String(row.external_id).toLowerCase().startsWith("hist:")
+      );
 
     const historyRows = Object.values(events)
       .filter((e) => e.type === "VEVENT")
@@ -68,7 +74,7 @@ export async function syncCalendar(calendarId: string, userId: string) {
     if (rows.length > 0) {
       const { error: upsertError } = await supabase
         .from("bookings")
-        .upsert(rows, { onConflict: "external_id" });
+        .upsert(rows, { onConflict: "calendar_id,external_id" });
       if (upsertError) throw upsertError;
     }
 
@@ -86,6 +92,10 @@ export async function syncCalendar(calendarId: string, userId: string) {
 
     return { ok: true, count: rows.length };
   } catch (err) {
+    console.error("[ical-sync] syncCalendar failed", {
+      calendarId,
+      error: err instanceof Error ? err.message : err,
+    });
     await supabase.from("property_calendars").update({ status: "error" }).eq("id", calendarId);
     return { ok: false, error: err instanceof Error ? err.message : "Sync failed" };
   }
@@ -118,20 +128,21 @@ export async function syncPropertyCalendars(
     .select("id, last_synced_at, status")
     .eq("property_id", propertyId);
 
-  const results = [];
+  const tasks: Array<Promise<unknown>> = [];
   for (const calendar of calendars ?? []) {
     const last = calendar.last_synced_at ? new Date(calendar.last_synced_at).getTime() : 0;
     const minutesSince = last ? (Date.now() - last) / 60000 : Infinity;
     if (calendar.status === "syncing") {
-      results.push({ ok: true, id: calendar.id, skipped: true, reason: "already syncing" });
+      tasks.push(Promise.resolve({ ok: true, id: calendar.id, skipped: true, reason: "already syncing" }));
       continue;
     }
     if (minutesSince < minMinutes) {
-      results.push({ ok: true, id: calendar.id, skipped: true, reason: "recently synced" });
+      tasks.push(Promise.resolve({ ok: true, id: calendar.id, skipped: true, reason: "recently synced" }));
       continue;
     }
-    results.push(await syncCalendar(calendar.id, userId));
+    tasks.push(syncCalendar(calendar.id, userId));
   }
 
+  const results = await Promise.all(tasks);
   return { ok: true, results };
 }

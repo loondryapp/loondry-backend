@@ -17,6 +17,8 @@ const EnvSchema = z.object({
   SUPABASE_URL: z.string().url().optional(),
   SUPABASE_ANON_KEY: z.string().optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
+  ICAL_HISTORY_CLEANUP_INTERVAL_MINUTES: z.coerce.number().default(360),
+  ICAL_HISTORY_CANCEL_WINDOW_HOURS: z.coerce.number().default(24),
 });
 
 export const env = EnvSchema.parse(process.env);
