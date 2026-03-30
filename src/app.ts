@@ -8,6 +8,7 @@ import { healthRouter } from "./routes/health.js";
 import { opsRouter } from "./routes/ops.js";
 import { hostRouter } from "./routes/host.js";
 import { impersonationRouter } from "./routes/impersonation.js";
+import { laundryRouter } from "./routes/laundry.js";
 
 type OriginDecision = string | boolean;
 
@@ -50,6 +51,7 @@ export function createApp() {
   app.use(healthRouter);
   app.use(opsRouter);
   app.use(hostRouter);
+  app.use(laundryRouter);
   app.use(impersonationRouter);
 
   app.use(notFound);
