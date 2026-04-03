@@ -9,6 +9,7 @@ import { opsRouter } from "./routes/ops.js";
 import { hostRouter } from "./routes/host.js";
 import { impersonationRouter } from "./routes/impersonation.js";
 import { laundryRouter } from "./routes/laundry.js";
+import { propertyServicesRouter } from "./routes/property-services.js";
 
 type OriginDecision = string | boolean;
 
@@ -52,6 +53,7 @@ export function createApp() {
   app.use(opsRouter);
   app.use(hostRouter);
   app.use(laundryRouter);
+  app.use(propertyServicesRouter);
   app.use(impersonationRouter);
 
   app.use(notFound);
