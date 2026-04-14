@@ -85,6 +85,37 @@ export async function syncCalendar(calendarId: string, userId: string) {
       if (histError) throw histError;
     }
 
+    // Immediately cancel history records whose UIDs are no longer in the current iCal feed.
+    // This covers cancellation + re-booking scenarios without waiting for the 24h cleanup window.
+    {
+      const currentUids = new Set(historyRows.map((r) => r.uid));
+      const urlKey = encodeURIComponent(String(calendar.ical_url));
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+
+      const { data: activeHistory } = await supabase
+        .from("ical_events_history")
+        .select("id, uid")
+        .eq("property_id", calendar.property_id)
+        .eq("url_key", urlKey)
+        .eq("cancelled", false)
+        .gte("end_at", todayStart.toISOString());
+
+      if (activeHistory && activeHistory.length > 0) {
+        const staleIds = activeHistory
+          .filter((h) => !currentUids.has(h.uid))
+          .map((h) => h.id);
+
+        if (staleIds.length > 0) {
+          await supabase
+            .from("ical_events_history")
+            .update({ cancelled: true, updated_at: nowIso })
+            .in("id", staleIds);
+          console.log("[ical-sync] cancelled stale history records", { calendarId, count: staleIds.length });
+        }
+      }
+    }
+
     await supabase
       .from("property_calendars")
       .update({ status: "active", last_synced_at: new Date().toISOString() })
