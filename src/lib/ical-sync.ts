@@ -76,6 +76,34 @@ export async function syncCalendar(calendarId: string, userId: string) {
         .from("bookings")
         .upsert(rows, { onConflict: "calendar_id,external_id" });
       if (upsertError) throw upsertError;
+
+      // Remove bookings for this calendar whose external_id is no longer in the iCal feed.
+      // Guard: only run if the feed returned at least one event to avoid wiping data on a
+      // temporary fetch failure.
+      const currentExternalIds = new Set(rows.map((r) => r.external_id));
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+
+      const { data: activeBookings } = await supabase
+        .from("bookings")
+        .select("id, external_id")
+        .eq("calendar_id", calendarId)
+        .gte("end_date", todayStart.toISOString());
+
+      if (activeBookings && activeBookings.length > 0) {
+        const staleIds = activeBookings
+          .filter((b) => !currentExternalIds.has(b.external_id))
+          .map((b) => b.id);
+
+        if (staleIds.length > 0) {
+          const { error: deleteError } = await supabase
+            .from("bookings")
+            .delete()
+            .in("id", staleIds);
+          if (deleteError) console.error("[ical-sync] failed to delete stale bookings", deleteError);
+          else console.log("[ical-sync] deleted stale bookings", { calendarId, count: staleIds.length });
+        }
+      }
     }
 
     if (historyRows.length > 0) {
@@ -87,7 +115,9 @@ export async function syncCalendar(calendarId: string, userId: string) {
 
     // Immediately cancel history records whose UIDs are no longer in the current iCal feed.
     // This covers cancellation + re-booking scenarios without waiting for the 24h cleanup window.
-    {
+    // Guard: only run if the iCal returned at least one event — an empty feed likely means a
+    // temporary fetch issue, not that all bookings were cancelled.
+    if (historyRows.length > 0) {
       const currentUids = new Set(historyRows.map((r) => r.uid));
       const urlKey = encodeURIComponent(String(calendar.ical_url));
       const todayStart = new Date();
