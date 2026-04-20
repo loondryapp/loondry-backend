@@ -148,7 +148,7 @@ hostRouter.get("/api/host/properties", async (req, res) => {
 
   let propsQuery = supabase
     .from("properties")
-    .select("id, name, address, city, rooms, beds, created_at, cover_url, use_laundry, management_type, archived_at, use_laundry, management_type")
+    .select("id, name, address, city, rooms, beds, created_at, cover_url, use_laundry, management_type, archived_at")
     .eq("user_id", userId);
   if (!includeArchived) propsQuery = propsQuery.is("archived_at", null);
   const { data, error } = await propsQuery.order("created_at", { ascending: false });
@@ -174,7 +174,7 @@ hostRouter.get("/api/host/properties/:id", async (req, res) => {
   const userId = req.userId!;
   const { data, error } = await supabase
     .from("properties")
-    .select("id, name, address, city, rooms, beds, created_at, cover_url, use_laundry, management_type, archived_at, use_laundry, management_type")
+    .select("id, name, address, city, rooms, beds, created_at, cover_url, use_laundry, management_type, archived_at")
     .eq("id", id)
     .eq("user_id", userId)
     .maybeSingle();
