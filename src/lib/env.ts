@@ -4,6 +4,7 @@ import { z } from "zod";
 dotenv.config();
 
 const EnvSchema = z.object({
+  NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   PORT: z.coerce.number().default(8080),
   // Comma-separated list or "*".
   CORS_ORIGIN: z.string().default("http://localhost:5173"),
@@ -19,6 +20,12 @@ const EnvSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
   ICAL_HISTORY_CLEANUP_INTERVAL_MINUTES: z.coerce.number().default(360),
   ICAL_HISTORY_CANCEL_WINDOW_HOURS: z.coerce.number().default(24),
+
+  // Prisma / direct DB connection (Supabase → Settings → Database → Connection string)
+  DATABASE_URL: z.string().url().optional(),
+
+  // Frontend URL for push notification delivery
+  FRONTEND_URL: z.string().url().optional(),
 });
 
 export const env = EnvSchema.parse(process.env);

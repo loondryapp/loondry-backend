@@ -9,7 +9,12 @@ import { opsRouter } from "./routes/ops.js";
 import { hostRouter } from "./routes/host.js";
 import { impersonationRouter } from "./routes/impersonation.js";
 import { laundryRouter } from "./routes/laundry.js";
+import { laundryConnectionRouter } from "./routes/laundry-connection.js";
 import { propertyServicesRouter } from "./routes/property-services.js";
+import { tasksRouter } from "./routes/tasks.js";
+import { cleanersRouter } from "./routes/cleaners.js";
+import { startAssignmentJob, startDeadlineAlertJob } from "./jobs/assignment.job.js";
+import { startTimeoutJob } from "./jobs/timeout.job.js";
 
 type OriginDecision = string | boolean;
 
@@ -53,11 +58,21 @@ export function createApp() {
   app.use(opsRouter);
   app.use(hostRouter);
   app.use(laundryRouter);
+  app.use(laundryConnectionRouter);
   app.use(propertyServicesRouter);
   app.use(impersonationRouter);
+  app.use(tasksRouter);
+  app.use(cleanersRouter);
 
   app.use(notFound);
   app.use(errorHandler);
+
+  // ── Cron jobs ───────────────────────────────────────────────────────────────
+  if (env.NODE_ENV !== "test") {
+    startAssignmentJob();
+    startTimeoutJob();
+    startDeadlineAlertJob();
+  }
 
   return app;
 }
