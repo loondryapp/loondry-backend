@@ -13,6 +13,39 @@ function isArchivedAtMissing(error: unknown) {
   return msg.includes("archived_at");
 }
 
+async function attachPropertyBedTypes<T extends { id?: string | null }>(
+  supabase: ReturnType<typeof getSupabaseService>,
+  properties: T[]
+) {
+  const propertyIds = properties.map((property) => String(property.id ?? "")).filter(Boolean);
+  if (!propertyIds.length) return properties;
+
+  const { data, error } = await supabase
+    .from("property_beds")
+    .select("property_id,bed_type,quantity")
+    .in("property_id", propertyIds);
+  if (error) return properties;
+
+  const bedTypesByProperty = new Map<string, string[]>();
+  for (const row of data ?? []) {
+    const propertyId = String(row.property_id ?? "");
+    const quantity = Number(row.quantity ?? 0);
+    const bedType = String(row.bed_type ?? "");
+    if (!propertyId || quantity <= 0 || !bedType) continue;
+
+    const singularLabel = bedType === "double" ? "matrimoniale" : bedType === "single" ? "singolo" : bedType;
+    const pluralLabel = bedType === "double" ? "matrimoniali" : bedType === "single" ? "singoli" : `${bedType}i`;
+    const current = bedTypesByProperty.get(propertyId) ?? [];
+    current.push(`${quantity} ${quantity === 1 ? "letto" : "letti"} ${quantity === 1 ? singularLabel : pluralLabel}`);
+    bedTypesByProperty.set(propertyId, current);
+  }
+
+  return properties.map((property) => ({
+    ...property,
+    bed_types: bedTypesByProperty.get(String(property.id ?? ""))?.join(" + ") ?? "",
+  }));
+}
+
 hostRouter.use(async (req, _res, next) => {
   const user = await requireUser(req);
   if (!user) return next(new HttpError(401, "Unauthorized"));
@@ -148,7 +181,7 @@ hostRouter.get("/api/host/properties", async (req, res) => {
 
   let propsQuery = supabase
     .from("properties")
-    .select("id, name, address, city, rooms, beds, created_at, cover_url, use_laundry, management_type, archived_at")
+    .select("id, name, address, city, rooms, beds, created_at, cover_url, use_laundry, management_type, archived_at, sqm, bedrooms, bathrooms, default_guests, max_guests, check_in_time, check_out_time")
     .eq("user_id", userId);
   if (!includeArchived) propsQuery = propsQuery.is("archived_at", null);
   const { data, error } = await propsQuery.order("created_at", { ascending: false });
@@ -156,15 +189,15 @@ hostRouter.get("/api/host/properties", async (req, res) => {
     if (isArchivedAtMissing(error)) {
       const fallback = await supabase
         .from("properties")
-        .select("id, name, address, city, rooms, beds, created_at, cover_url, use_laundry, management_type")
+        .select("id, name, address, city, rooms, beds, created_at, cover_url, use_laundry, management_type, sqm, bedrooms, bathrooms, default_guests, max_guests, check_in_time, check_out_time")
         .eq("user_id", userId)
         .order("created_at", { ascending: false });
       if (fallback.error) throw new HttpError(400, fallback.error.message);
-      return res.json(fallback.data ?? []);
+      return res.json(await attachPropertyBedTypes(supabase, fallback.data ?? []));
     }
     throw new HttpError(400, error.message);
   }
-  res.json(data ?? []);
+  res.json(await attachPropertyBedTypes(supabase, data ?? []));
 });
 
 hostRouter.get("/api/host/properties/:id", async (req, res) => {
@@ -174,7 +207,7 @@ hostRouter.get("/api/host/properties/:id", async (req, res) => {
   const userId = req.userId!;
   const { data, error } = await supabase
     .from("properties")
-    .select("id, name, address, city, rooms, beds, created_at, cover_url, use_laundry, management_type, archived_at")
+    .select("id, name, address, city, rooms, beds, created_at, cover_url, use_laundry, management_type, archived_at, sqm, bedrooms, bathrooms, default_guests, max_guests, check_in_time, check_out_time")
     .eq("id", id)
     .eq("user_id", userId)
     .maybeSingle();
@@ -182,18 +215,20 @@ hostRouter.get("/api/host/properties/:id", async (req, res) => {
     if (isArchivedAtMissing(error)) {
       const fallback = await supabase
         .from("properties")
-        .select("id, name, address, city, rooms, beds, created_at, cover_url, use_laundry, management_type")
+        .select("id, name, address, city, rooms, beds, created_at, cover_url, use_laundry, management_type, sqm, bedrooms, bathrooms, default_guests, max_guests, check_in_time, check_out_time")
         .eq("id", id)
         .eq("user_id", userId)
         .maybeSingle();
       if (fallback.error) throw new HttpError(400, fallback.error.message);
       if (!fallback.data) throw new HttpError(404, "Property not found");
-      return res.json(fallback.data);
+      const [withBeds] = await attachPropertyBedTypes(supabase, [fallback.data]);
+      return res.json(withBeds);
     }
     throw new HttpError(400, error.message);
   }
   if (!data) throw new HttpError(404, "Property not found");
-  res.json(data);
+  const [withBeds] = await attachPropertyBedTypes(supabase, [data]);
+  res.json(withBeds);
 });
 
 hostRouter.post("/api/host/properties", async (req, res) => {
@@ -243,7 +278,7 @@ hostRouter.patch("/api/host/properties/:id", async (req, res) => {
   const userId = req.userId!;
   const baseUpdate = supabase.from("properties").update(body.data).eq("id", id).eq("user_id", userId);
   let { data, error } = await baseUpdate
-    .select("id, name, address, city, rooms, beds, created_at, cover_url, use_laundry, management_type, archived_at")
+    .select("id, name, address, city, rooms, beds, created_at, cover_url, use_laundry, management_type, archived_at, sqm, bedrooms, bathrooms, default_guests, max_guests, check_in_time, check_out_time")
     .single();
   if (error && isArchivedAtMissing(error)) {
     const fallback = await baseUpdate.select("id, name, address, city, rooms, beds, created_at, cover_url, use_laundry, management_type").single();
