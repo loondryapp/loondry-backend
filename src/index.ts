@@ -45,8 +45,10 @@ if (Number.isFinite(env.ICAL_HISTORY_CLEANUP_INTERVAL_MINUTES) && env.ICAL_HISTO
 // timer di Render, tenendo il servizio sveglio senza dipendere da servizi
 // esterni come UptimeRobot.
 function startKeepAlive() {
-  if (env.NODE_ENV !== "production") return;
+  if (env.NODE_ENV === "test") return;
   if (typeof fetch !== "function") return;
+  // Attivo solo quando c'è un URL pubblico (su Render RENDER_EXTERNAL_URL è
+  // impostata in automatico); in locale resta spento perché assente.
   const baseUrl = (env.KEEP_ALIVE_URL ?? env.RENDER_EXTERNAL_URL)?.replace(/\/$/, "");
   if (!baseUrl) return;
   if (!Number.isFinite(env.KEEP_ALIVE_INTERVAL_MINUTES) || env.KEEP_ALIVE_INTERVAL_MINUTES <= 0) return;
