@@ -26,6 +26,14 @@ const EnvSchema = z.object({
 
   // Frontend URL for push notification delivery
   FRONTEND_URL: z.string().url().optional(),
+
+  // Keep-alive: il free tier di Render spegne il servizio dopo ~15 min di
+  // inattività (poi la prima richiesta paga un cold start lento, ~15-30s). Un
+  // auto-ping periodico tiene il servizio sveglio. RENDER_EXTERNAL_URL è
+  // impostata automaticamente da Render; KEEP_ALIVE_URL permette un override.
+  RENDER_EXTERNAL_URL: z.string().url().optional(),
+  KEEP_ALIVE_URL: z.string().url().optional(),
+  KEEP_ALIVE_INTERVAL_MINUTES: z.coerce.number().default(10),
 });
 
 export const env = EnvSchema.parse(process.env);
