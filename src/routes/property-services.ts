@@ -18,8 +18,7 @@ type PropertyRow = {
   user_id?: string | null;
   host_id?: string | null;
   name: string;
-  bedrooms?: number | null;
-  bathrooms?: number | null;
+  rooms?: number | null;
   beds?: number | null;
   guests?: number | null;
   default_guests?: number | null;
@@ -92,13 +91,13 @@ async function ensureHostOwnsProperty(hostId: string, propertyId: string): Promi
   const supabase = getSupabaseService();
   let selected = await supabase
     .from("properties")
-    .select("id,user_id,host_id,name,bedrooms,bathrooms,beds,guests,default_guests")
+    .select("id,user_id,host_id,name,rooms,beds,guests,default_guests")
     .eq("id", propertyId)
     .maybeSingle();
   if (selected.error && (isMissingColumn(selected.error, "host_id") || isMissingColumn(selected.error, "guests"))) {
     selected = await supabase
       .from("properties")
-      .select("id,user_id,name,bedrooms,bathrooms,beds,default_guests")
+      .select("id,user_id,name,rooms,beds,default_guests")
       .eq("id", propertyId)
       .maybeSingle();
   }
@@ -178,8 +177,8 @@ async function getPropertyWithService(req: Request, res: Response) {
   return res.json({
     id: property.id,
     name: property.name,
-    bedrooms: property.bedrooms ?? null,
-    bathrooms: property.bathrooms ?? null,
+    bedrooms: property.rooms ?? null,
+    bathrooms: null,
     beds: property.beds ?? null,
     guests: property.guests ?? property.default_guests ?? null,
     selected_service_id: propertyService?.service_id ?? null,

@@ -13,6 +13,12 @@ function isArchivedAtMissing(error: unknown) {
   return msg.includes("archived_at");
 }
 
+const HOST_PROPERTY_SELECT =
+  "id, name, address, city, rooms, beds, created_at, cover_url, use_laundry, management_type, archived_at, sqm, default_guests, max_guests, check_in_time, check_out_time";
+
+const HOST_PROPERTY_SELECT_WITHOUT_ARCHIVED =
+  "id, name, address, city, rooms, beds, created_at, cover_url, use_laundry, management_type, sqm, default_guests, max_guests, check_in_time, check_out_time";
+
 async function attachPropertyBedTypes<T extends { id?: string | null }>(
   supabase: ReturnType<typeof getSupabaseService>,
   properties: T[]
@@ -181,7 +187,7 @@ hostRouter.get("/api/host/properties", async (req, res) => {
 
   let propsQuery = supabase
     .from("properties")
-    .select("id, name, address, city, rooms, beds, created_at, cover_url, use_laundry, management_type, archived_at, sqm, bedrooms, bathrooms, default_guests, max_guests, check_in_time, check_out_time")
+    .select(HOST_PROPERTY_SELECT)
     .eq("user_id", userId);
   if (!includeArchived) propsQuery = propsQuery.is("archived_at", null);
   const { data, error } = await propsQuery.order("created_at", { ascending: false });
@@ -189,7 +195,7 @@ hostRouter.get("/api/host/properties", async (req, res) => {
     if (isArchivedAtMissing(error)) {
       const fallback = await supabase
         .from("properties")
-        .select("id, name, address, city, rooms, beds, created_at, cover_url, use_laundry, management_type, sqm, bedrooms, bathrooms, default_guests, max_guests, check_in_time, check_out_time")
+        .select(HOST_PROPERTY_SELECT_WITHOUT_ARCHIVED)
         .eq("user_id", userId)
         .order("created_at", { ascending: false });
       if (fallback.error) throw new HttpError(400, fallback.error.message);
@@ -207,7 +213,7 @@ hostRouter.get("/api/host/properties/:id", async (req, res) => {
   const userId = req.userId!;
   const { data, error } = await supabase
     .from("properties")
-    .select("id, name, address, city, rooms, beds, created_at, cover_url, use_laundry, management_type, archived_at, sqm, bedrooms, bathrooms, default_guests, max_guests, check_in_time, check_out_time")
+    .select(HOST_PROPERTY_SELECT)
     .eq("id", id)
     .eq("user_id", userId)
     .maybeSingle();
@@ -215,7 +221,7 @@ hostRouter.get("/api/host/properties/:id", async (req, res) => {
     if (isArchivedAtMissing(error)) {
       const fallback = await supabase
         .from("properties")
-        .select("id, name, address, city, rooms, beds, created_at, cover_url, use_laundry, management_type, sqm, bedrooms, bathrooms, default_guests, max_guests, check_in_time, check_out_time")
+        .select(HOST_PROPERTY_SELECT_WITHOUT_ARCHIVED)
         .eq("id", id)
         .eq("user_id", userId)
         .maybeSingle();
@@ -278,7 +284,7 @@ hostRouter.patch("/api/host/properties/:id", async (req, res) => {
   const userId = req.userId!;
   const baseUpdate = supabase.from("properties").update(body.data).eq("id", id).eq("user_id", userId);
   let { data, error } = await baseUpdate
-    .select("id, name, address, city, rooms, beds, created_at, cover_url, use_laundry, management_type, archived_at, sqm, bedrooms, bathrooms, default_guests, max_guests, check_in_time, check_out_time")
+    .select(HOST_PROPERTY_SELECT)
     .single();
   if (error && isArchivedAtMissing(error)) {
     const fallback = await baseUpdate.select("id, name, address, city, rooms, beds, created_at, cover_url, use_laundry, management_type").single();
